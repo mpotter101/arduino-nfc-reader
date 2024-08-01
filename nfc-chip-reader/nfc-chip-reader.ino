@@ -50,6 +50,29 @@ void setup()
   Serial.begin(BAUDRATE);
   Serial.println();
 
+  bool lightsReady = PrepStatusLights();
+  bool nfcReady = PrepNfcReader();
+
+  nfcReady = false;
+
+  if (!lightsReady)
+  {
+    Serial.println("\nStatus lights failed to setup.");
+  }
+
+  if (!nfcReady)
+  {
+    Serial.println("\nNfc Chip failed to setup");
+  }
+
+  if (!lightsReady || !nfcReady)
+  {
+    while(1) {}; //halt
+  }
+}
+
+bool PrepStatusLights()
+{
   PowerLight = StatusLight {RED, false, COLOR_MAX, 1000, 1000, 0, StatusState::on};
   CardLight = StatusLight {BLUE, false, COLOR_MAX, 1500, 150, 0, StatusState::reading};
   GameLight = StatusLight {GREEN, false, COLOR_MAX, 450, 100, 0, StatusState::off};
@@ -61,6 +84,11 @@ void setup()
   digitalWrite(GameLight.pin, LOW);
   digitalWrite(CardLight.pin, LOW);
 
+  return true;
+}
+
+bool PrepNfcReader()
+{
   nfc.begin();
   Serial.println();
   Serial.println("Getting formware version...");
@@ -68,7 +96,7 @@ void setup()
   if (! versiondata)
   {
     Serial.print("Didn't find PN53x board");
-    while (1); // halt
+    return false;
   }
 
   // Got ok data, print it out!
@@ -82,6 +110,7 @@ void setup()
   // This prevents us from waiting forever for a card, which is
   // the default behaviour of the PN532.  nfc.setPassiveActivationRetries(0xFF);    // configure board to read RFID tags  nfc.SAMConfig();      Serial.println("Waiting for an ISO14443A card");
 
+  return true;
 }
 
 bool isReadyToBlink(StatusLight light)
@@ -183,6 +212,8 @@ void readCard()
   // 'uid' will be populated with the UID, and uidLength will indicate
   // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+  Serial.println(success);
+  delay(1000);
   if (success) 
   {
     Serial.println("Found a card!");

@@ -1,5 +1,4 @@
 // NFC Reader
-// 
 
 // Libraries
 #include <Wire.h>
@@ -20,7 +19,7 @@ PN532 nfc(pn532i2c);
 
 // Light control and Update speed
 #define COLOR_MAX 10
-#define UPDATE_DELAY 10
+#define UPDATE_DELAY 17
 
 enum StatusState 
 {
@@ -45,6 +44,9 @@ StatusLight PowerLight;
 StatusLight CardLight;
 StatusLight GameLight;
 
+String LAST_UID = "";
+String CARD_UID = "";
+
 void setup()
 {
   Serial.begin(BAUDRATE);
@@ -52,8 +54,6 @@ void setup()
 
   bool lightsReady = PrepStatusLights();
   bool nfcReady = PrepNfcReader();
-
-  nfcReady = false;
 
   if (!lightsReady)
   {
@@ -74,13 +74,13 @@ void setup()
 bool PrepStatusLights()
 {
   PowerLight = StatusLight {RED, false, COLOR_MAX, 1000, 1000, 0, StatusState::on};
-  CardLight = StatusLight {BLUE, false, COLOR_MAX, 1500, 150, 0, StatusState::reading};
+  CardLight = StatusLight {BLUE, false, COLOR_MAX, 100, 100, 0, StatusState::reading};
   GameLight = StatusLight {GREEN, false, COLOR_MAX, 450, 100, 0, StatusState::off};
 
   pinMode(PowerLight.pin, OUTPUT);
   pinMode(GameLight.pin, OUTPUT);
   pinMode(CardLight.pin, OUTPUT);
-  analogWrite(PowerLight.pin, LOW);
+  digitalWrite(PowerLight.pin, HIGH);
   digitalWrite(GameLight.pin, LOW);
   digitalWrite(CardLight.pin, LOW);
 
@@ -108,9 +108,81 @@ bool PrepNfcReader()
   Serial.println((versiondata>>8) & 0xFF, DEC);
   // Set the max number of retry attempts to read from a card
   // This prevents us from waiting forever for a card, which is
-  // the default behaviour of the PN532.  nfc.setPassiveActivationRetries(0xFF);    // configure board to read RFID tags  nfc.SAMConfig();      Serial.println("Waiting for an ISO14443A card");
+  // the default behaviour of the PN532.  
+  nfc.setPassiveActivationRetries(0xFF);
+  // configure board to read RFID tags  
+  nfc.SAMConfig();
+  Serial.println("Waiting for an ISO14443A card");
 
   return true;
+}
+
+// main loop
+void loop()
+{
+  // Node JS Interactions
+  // ...
+  readCard();
+
+  // Update lights based on state
+  PowerLight = ManageLight(PowerLight);
+  CardLight = ManageLight(CardLight);
+  GameLight = ManageLight(GameLight);
+
+  // Prepare for next loop
+  delay(UPDATE_DELAY);
+}
+
+void readCard()
+{
+  boolean success;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
+  // Buffer to store the returned UID
+  uint8_t uidLength;
+  // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+  // 'uid' will be populated with the UID, and uidLength will indicate
+  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+  if (success)
+  {
+    String hex_value = "";
+    for (uint8_t i=0; i < uidLength; i++)
+    {
+      hex_value += (String)uid[i];
+    }
+    
+    CARD_UID = hex_value;
+
+    if (CARD_UID != LAST_UID)
+    {
+      CardLight = TurnOn(CardLight);
+      Serial.println("\nNew card detected!");
+      Serial.println("UID: ");
+      Serial.println(hex_value);
+      Serial.print("UID Length: ");
+      Serial.print(uidLength, DEC);
+      Serial.println(" bytes");
+      Serial.print("UID Value: ");
+      Serial.println(", value="+hex_value);
+      LAST_UID = hex_value;
+    }
+  }
+  else
+  {
+    if (LAST_UID != "")
+    {
+      Serial.println("Card no longer detected.");
+      Serial.println(LAST_UID);
+      LAST_UID = "";
+      CardLight = TurnOff(CardLight);
+    }
+    else
+    {
+      // PN532 probably timed out waiting for a card
+    }
+  }
+
 }
 
 bool isReadyToBlink(StatusLight light)
@@ -149,6 +221,8 @@ StatusLight TurnOff(StatusLight light)
 {
   digitalWrite(light.pin, LOW);
   light.isOn = false;
+  light.blinkTimer = 0;
+  light.state = StatusState::off;
   return light;
 }
 
@@ -156,6 +230,8 @@ StatusLight TurnOn(StatusLight light)
 {
   analogWrite(light.pin, light.brightness);
   light.isOn = true;
+  light.blinkTimer = 0;
+  light.state = StatusState::on;
   return light;
 }
 
@@ -183,73 +259,4 @@ StatusLight ManageLight(StatusLight light)
   }
 
   return light;
-}
-
-// main loop
-void loop()
-{
-  // Node JS Interactions
-  // ...
-  readCard();
-
-  // Update lights based on state
-  PowerLight = ManageLight(PowerLight);
-  CardLight = ManageLight(CardLight);
-  GameLight = ManageLight(GameLight);
-
-  // Prepare for next loop
-  delay(UPDATE_DELAY);
-}
-
-void readCard()
-{
-  boolean success;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
-  // Buffer to store the returned UID
-  uint8_t uidLength;
-  // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
-  // 'uid' will be populated with the UID, and uidLength will indicate
-  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
-  Serial.println(success);
-  delay(1000);
-  if (success) 
-  {
-    Serial.println("Found a card!");
-    Serial.print("UID Length: ");
-    Serial.print(uidLength, DEC);
-    Serial.println(" bytes");
-    Serial.print("UID Value: ");
-    String hex_value = "";
-    for (uint8_t i=0; i < uidLength; i++)
-    {
-      Serial.print(" 0x");Serial.print(uid[i], HEX);
-      //Serial.print(" ");Serial.print(uid[i], HEX);
-      hex_value += (String)uid[i];
-    }
-    Serial.println(", value="+hex_value);
-    if(hex_value == "16517722582") 
-    {
-      Serial.println("This is Key Tag. ");
-    }
-    else if(hex_value == "230522426") 
-    {
-      Serial.println("This is Card Tag. ");
-    }
-    else if(hex_value == "63156295") 
-    {
-      Serial.println("This is Phone Tag. ");
-    }
-    else Serial.println("I don't know.");
-    Serial.println("");
-    // Wait 1 second before continuing    
-    delay(1000);
-  }
-  else
-  {
-    // PN532 probably timed out waiting for a card    
-    Serial.println("Waiting for a card...");
-  }
-
 }
